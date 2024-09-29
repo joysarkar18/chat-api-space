@@ -1,0 +1,21 @@
+# Node modules
+node_modules/
+private.json
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Environment variables
+.env
+
+# Build output
+dist/
+build/
+
+# IDE and OS-specific files
+.DS_Store
+.vscode/
+.idea/
+*.swp
