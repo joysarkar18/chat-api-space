@@ -4,6 +4,8 @@ const bodyParser = require('body-parser');
 const dotenv = require('dotenv');
 const admin = require('firebase-admin');
 const User = require('./models/user');
+const http = require('http'); // Import HTTP to create server
+const { Server } = require('socket.io'); // Import Socket.IO
 
 // Load environment variables
 dotenv.config();
@@ -25,6 +27,17 @@ mongoose.connect(process.env.MONGODB_URI, {
 // Initialize Express app
 const app = express();
 app.use(bodyParser.json()); // Parse JSON bodies
+
+// Create HTTP server and pass the app instance
+const server = http.createServer(app);
+
+// Initialize Socket.IO with the server
+const io = new Server(server, {
+  cors: {
+    origin: "*", // Add allowed origins here
+    methods: ["GET", "POST"]
+  }
+});
 
 // Firebase Authentication Middleware
 const authenticateFirebaseToken = async (req, res, next) => {
@@ -74,8 +87,36 @@ app.post('/register', authenticateFirebaseToken, async (req, res) => {
   }
 });
 
+// Socket.IO connection handler
+io.on('connection', (socket) => {
+  console.log('A user connected:', socket.id);
+
+  // Join specific room (for one-to-one chat)
+  socket.on('join', ({ userId, targetUserId }) => {
+    const room = getRoomId(userId, targetUserId);
+    socket.join(room);
+    console.log(`User ${userId} joined room ${room}`);
+  });
+
+  // Handle incoming messages
+  socket.on('send_message', ({ senderId, receiverId, message }) => {
+    const room = getRoomId(senderId, receiverId);
+    io.to(room).emit('receive_message', { senderId, message });
+  });
+
+  // Handle disconnect
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
+  });
+});
+
+// Helper function to create a room ID for two users
+function getRoomId(userId, targetUserId) {
+  return [userId, targetUserId].sort().join('_'); // Generate unique room ID for two users
+}
+
 // Start the server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
