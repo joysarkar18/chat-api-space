@@ -99,10 +99,14 @@ io.on('connection', (socket) => {
   });
 
   // Handle incoming messages
-  socket.on('send_message', ({ senderId, receiverId, message }) => {
-    const room = getRoomId(senderId, receiverId);
-    io.to(room).emit('receive_message', { senderId, message });
-  });
+ // Handle incoming messages
+socket.on('send_message', ({ senderId, receiverId, message }) => {
+  const room = getRoomId(senderId, receiverId);
+  
+  // Broadcast to everyone except the sender
+  socket.broadcast.to(room).emit('receive_message', { senderId, message });
+});
+
 
   // Handle disconnect
   socket.on('disconnect', () => {
