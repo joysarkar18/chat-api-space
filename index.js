@@ -59,9 +59,9 @@ const authenticateFirebaseToken = async (req, res, next) => {
 
 // User Registration API
 app.post('/register', authenticateFirebaseToken, async (req, res) => {
-  const { phoneNumber, notificationToken } = req.body;
+  const { phoneNumber, notificationToken , uid } = req.body;
 
-  if (!phoneNumber || !notificationToken) {
+  if (!phoneNumber || !notificationToken || !uid) {
     return res.status(400).json({ message: 'Phone number and notification token are required' });
   }
 
@@ -75,6 +75,7 @@ app.post('/register', authenticateFirebaseToken, async (req, res) => {
     } else {
       // Create a new user
       user = new User({
+        uid,
         phoneNumber,
         notificationToken,
       });
@@ -84,6 +85,7 @@ app.post('/register', authenticateFirebaseToken, async (req, res) => {
     res.status(201).json({ status: true, message: 'User registered successfully', user  });
   } catch (error) {
     res.status(500).json({status: false, message: 'Server error', error });
+    console.log(error);
   }
 });
 
@@ -100,11 +102,12 @@ io.on('connection', (socket) => {
 
   // Handle incoming messages
  // Handle incoming messages
-socket.on('send_message', ({ senderId, receiverId, message }) => {
+socket.on('send_message', ({ senderId, receiverId, message  , type }) => {
   const room = getRoomId(senderId, receiverId);
   
+  console.log('Broadcasting message:', { senderId, message, type });
   // Broadcast to everyone except the sender
-  socket.broadcast.to(room).emit('receive_message', { senderId, message });
+  socket.broadcast.to(room).emit('receive_message', { senderId, message , type });
 });
 
 
@@ -118,6 +121,53 @@ socket.on('send_message', ({ senderId, receiverId, message }) => {
 function getRoomId(userId, targetUserId) {
   return [userId, targetUserId].sort().join('_'); // Generate unique room ID for two users
 }
+
+
+
+app.post('/check-phone', async (req, res) => {
+  const { phoneNumbers } = req.body;
+
+  if (!phoneNumbers || phoneNumbers.length === 0) {
+    return res.status(400).json({ message: 'Phone numbers are required' });
+  }
+
+  try {
+    // Query the database to find the users with the provided phone numbers
+    const users = await User.find({ phoneNumber: { $in: phoneNumbers } });
+
+    // Create an object to map phone numbers with existence status and user data
+    const result = phoneNumbers.map(number => {
+      const user = users.find(user => user.phoneNumber === number);
+      return {
+        phoneNumber: number,
+        exists: !!user,  // Convert user existence to boolean
+        user: user ? {   // If user exists, return selected fields, otherwise null
+          id: user._id,
+          name: user.name,
+          uid:user.uid,
+          phoneNumber: user.phoneNumber,
+          status: user.status,
+          profilePic: user.profilePic,
+          notificationToken: user.notificationToken,
+          createdAt: user.createdAt
+        } : null
+      };
+    });
+
+    res.status(200).json({
+      status: true,
+      message: 'Phone number(s) checked',
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: false,
+      message: 'Server error',
+      error,
+    });
+  }
+});
+
 
 // Start the server
 const PORT = process.env.PORT || 3000;
