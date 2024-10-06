@@ -57,6 +57,10 @@ const authenticateFirebaseToken = async (req, res, next) => {
   }
 };
 
+
+app.get("/test" , async (req, res) => {
+  res.json({hii : "Hello world!"})
+} );
 // User Registration API
 app.post('/register', authenticateFirebaseToken, async (req, res) => {
   const { phoneNumber, notificationToken , uid } = req.body;
