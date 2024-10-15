@@ -106,12 +106,12 @@ io.on('connection', (socket) => {
 
   // Handle incoming messages
  // Handle incoming messages
-socket.on('send_message', ({ senderId, receiverId, message  , type }) => {
+socket.on('send_message', ({ senderId, receiverId, message  , type , time , date }) => {
   const room = getRoomId(senderId, receiverId);
   
-  console.log('Broadcasting message:', { senderId, message, type });
+  console.log('Broadcasting message:', { senderId, message, type , time , date });
   // Broadcast to everyone except the sender
-  socket.broadcast.to(room).emit('receive_message', { senderId, message , type });
+  socket.broadcast.to(room).emit('receive_message', { senderId, receiverId, message , type , time , date });
 });
 
 
