@@ -6,6 +6,7 @@ const admin = require('firebase-admin');
 const User = require('./models/user');
 const http = require('http'); // Import HTTP to create server
 const { Server } = require('socket.io'); // Import Socket.IO
+const Message = require('./models/message');
 
 // Load environment variables
 dotenv.config();
@@ -97,29 +98,67 @@ app.post('/register', authenticateFirebaseToken, async (req, res) => {
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.id);
 
-  // Join specific room (for one-to-one chat)
-  socket.on('join', ({ userId, targetUserId }) => {
+  socket.on('join', async ({ userId, targetUserId }) => {
     const room = getRoomId(userId, targetUserId);
     socket.join(room);
     console.log(`User ${userId} joined room ${room}`);
+
+    // Fetch undelivered messages when the user reconnects
+    const undeliveredMessages = await Message.find({
+      receiverId: userId,
+      delivered: false,
+    });
+
+    // Send undelivered messages to the user
+    if (undeliveredMessages.length > 0) {
+      socket.emit('receive_message', undeliveredMessages);
+      // Mark messages as delivered
+      await Message.updateMany(
+        { receiverId: userId, delivered: false },
+        { delivered: true }
+      );
+    }
   });
 
-  // Handle incoming messages
- // Handle incoming messages
-socket.on('send_message', ({ senderId, receiverId, message  , type , time , date }) => {
-  const room = getRoomId(senderId, receiverId);
-  
-  console.log('Broadcasting message:', { senderId, message, type , time , date });
-  // Broadcast to everyone except the sender
-  socket.broadcast.to(room).emit('receive_message', { senderId, receiverId, message , type , time , date });
-});
+  socket.on('send_message', async ({ senderId, receiverId, message, type, time, date }) => {
+    const room = getRoomId(senderId, receiverId);
+    const recipientSocket = getUserSocket(receiverId);
+
+    if (recipientSocket) {
+      // If the user is online, broadcast the message
+      socket.broadcast.to(room).emit('receive_message', { senderId, receiverId, message, type, time, date });
+    } else {
+      // Save the message to the database if the user is offline
+      const newMessage = new Message({
+        senderId,
+        receiverId,
+        message,
+        type,
+        time,
+        date,
+      });
+
+      await newMessage.save();
+      console.log('Message saved for offline user:', receiverId);
+    }
+  });
 
 
-  // Handle disconnect
+  socket.on('delete_message', async ({ senderId, receiverId , message , time , date }) => {
+ 
+    io.to(room).emit('message_deleted', { senderId , receiverId , message , time , date  });
+  });
+
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
   });
 });
+
+// Helper function to get the socket of a user by their ID
+function getUserSocket(userId) {
+  return Object.values(io.sockets.sockets).find((socket) => socket.userId === userId);
+}
+
 
 // Helper function to create a room ID for two users
 function getRoomId(userId, targetUserId) {
