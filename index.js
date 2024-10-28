@@ -11,11 +11,15 @@ const Message = require('./models/message');
 // Load environment variables
 dotenv.config();
 
+
+
 // Initialize Firebase Admin SDK
 const serviceAccount = require('./private.json');
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
+
+const db = admin.firestore();
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI, {
@@ -94,7 +98,8 @@ app.post('/register', authenticateFirebaseToken, async (req, res) => {
   }
 });
 
-// Socket.IO connection handler
+const userSockets = {}; // Mapping of userId to socket.id
+
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.id);
 
@@ -103,62 +108,86 @@ io.on('connection', (socket) => {
     socket.join(room);
     console.log(`User ${userId} joined room ${room}`);
 
-    // Fetch undelivered messages when the user reconnects
-    const undeliveredMessages = await Message.find({
-      receiverId: userId,
-      delivered: false,
-    });
+    // Store the mapping of userId to socket.id
+    userSockets[userId] = socket.id;
 
-    // Send undelivered messages to the user
-    if (undeliveredMessages.length > 0) {
-      socket.emit('receive_message', undeliveredMessages);
-      // Mark messages as delivered
-      await Message.updateMany(
-        { receiverId: userId, delivered: false },
-        { delivered: true }
-      );
-    }
+    receiverDoc = await db.collection('users').doc(targetUserId).get();
+    userDoc = await db.collection('users').doc(userId).get();
   });
 
   socket.on('send_message', async ({ senderId, receiverId, message, type, time, date }) => {
     const room = getRoomId(senderId, receiverId);
-    const recipientSocket = getUserSocket(receiverId);
-
-    if (recipientSocket) {
-      // If the user is online, broadcast the message
+    const recipientSocketId = userSockets[receiverId]; // Get the recipient's socket.id
+console.log(recipientSocketId);
+    if (recipientSocketId) {
+      console.log("both connected");
+      // If the user is online, send the message directly
       socket.broadcast.to(room).emit('receive_message', { senderId, receiverId, message, type, time, date });
     } else {
-      // Save the message to the database if the user is offline
-      const newMessage = new Message({
+      // Store the message for offline user and send notification
+      const messageData = {
         senderId,
         receiverId,
         message,
         type,
         time,
         date,
-      });
+        status: 'pending', // Track if the recipient was online or offline
+      };
 
-      await newMessage.save();
+      await db.collection('users').doc(receiverId).collection("unreadMessages").add(messageData);
+      console.log('Message stored successfully');
       console.log('Message saved for offline user:', receiverId);
+
+      if (receiverDoc.exists) {
+        const notificationToken = receiverDoc.data().notificationToken;
+        if (notificationToken) {
+          // Prepare the notification payload
+          const notificationPayload = {
+            notification: {
+              title: `New Message from ${userDoc.data().name ?? userDoc.data().phoneNumber}`,
+              body: `${message}`,
+            },
+            data: {
+              senderId,
+              message,
+              type,
+              time,
+              date,
+            },
+            token: notificationToken,
+          };
+
+          try {
+            // Send notification via FCM
+            await admin.messaging().send(notificationPayload);
+            console.log('Notification sent to offline user:', receiverId);
+          } catch (error) {
+            console.error('Error sending notification:', error);
+          }
+        } else {
+          console.log('No notification token found for user:', receiverId);
+        }
+      }
     }
   });
 
-
-  socket.on('delete_message', async ({ senderId, receiverId , message , time , date }) => {
- 
-    io.to(room).emit('message_deleted', { senderId , receiverId , message , time , date  });
-  });
-
+  // Remove user from userSockets when they disconnect
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
+    for (const [userId, id] of Object.entries(userSockets)) {
+      if (id === socket.id) {
+        delete userSockets[userId];
+        break;
+      }
+    }
   });
 });
 
 // Helper function to get the socket of a user by their ID
 function getUserSocket(userId) {
-  return Object.values(io.sockets.sockets).find((socket) => socket.userId === userId);
+  return io.sockets.sockets.get(userSockets[userId]);
 }
-
 
 // Helper function to create a room ID for two users
 function getRoomId(userId, targetUserId) {
